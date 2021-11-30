@@ -7,12 +7,14 @@ export default {
 }
 
 async function handleRequest(request, env) {
-  let id = env.COUNTER.idFromName("A");
+  console.log(env.COUNTER)
+
+  let id = env.COUNTER.idFromName("B");
   let obj = env.COUNTER.get(id);
   let resp = await obj.fetch(request.url);
   let count = await resp.text();
 
-  return new Response("Durable Object 'A' count: " + count);
+  return new Response(count);
 }
 
 // Durable Object
@@ -23,8 +25,10 @@ export class Counter {
     // `blockConcurrencyWhile()` ensures no requests are delivered until
     // initialization completes.
     this.state.blockConcurrencyWhile(async () => {
-        let stored = await this.state.storage.get("value");
-        this.value = stored || 0;
+      let stored = await this.state.storage.get("value");
+      let events = await this.state.storage.get("events");
+      this.value = stored || 0;
+      this.events = events || []
     })
   }
 
@@ -33,20 +37,26 @@ export class Counter {
     // Apply requested action.
     let url = new URL(request.url);
     let currentValue = this.value;
+    let events = this.events;
     switch (url.pathname) {
-    case "/increment":
-      currentValue = ++this.value;
-      await this.state.storage.put("value", this.value);
-      break;
-    case "/decrement":
-      currentValue = --this.value;
-      await this.state.storage.put("value", this.value);
-      break;
-    case "/":
-      // Just serve the current value. No storage calls needed!
-      break;
-    default:
-      return new Response("Not found", {status: 404});
+      case "/increment":
+        currentValue = ++this.value;
+        events.push('incremented')
+        await this.state.storage.put("value", this.value);
+        await this.state.storage.put("events", events);
+        break;
+      case "/decrement":
+        currentValue = --this.value;
+        events.push('decremented')
+        await this.state.storage.put("value", this.value);
+        await this.state.storage.put("events", events);
+        break;
+
+      case "/":
+        // Just serve the current value. No storage calls needed!
+        break;
+      default:
+        return new Response("Not found", {status: 404});
     }
 
     // Return `currentValue`. Note that `this.value` may have been
@@ -54,6 +64,9 @@ export class Counter {
     // yielded the event loop to `await` the `storage.put` above!
     // That's why we stored the counter value created by this
     // request in `currentValue` before we used `await`.
-    return new Response(currentValue);
+    return new Response(JSON.stringify({
+      currentValue,
+      events
+    }));
   }
 }
